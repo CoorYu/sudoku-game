@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>数独小游戏</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+      background: #f7f7f7;
+    }
+
+    h1 {
+      margin-bottom: 10px;
+    }
+
+    #top-bar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    #timer {
+      margin-bottom: 10px;
+      font-size: 14px;
+      color: #333;
+    }
+
+    #sudoku {
+      display: grid;
+      grid-template-columns: repeat(9, 40px);
+      grid-template-rows: repeat(9, 40px);
+      gap: 0;
+      border: 3px solid #000;
+      background: #fff;
+    }
+
+    .cell {
+      width: 40px;
+      height: 40px;
+      box-sizing: border-box;
+      border: 1px solid #aaa;
+      text-align: center;
+      font-size: 20px;
+      outline: none;
+      transition: background-color 0.15s ease;
+    }
+
+    .cell.border-top { border-top: 3px solid #000; }
+    .cell.border-left { border-left: 3px solid #000; }
+    .cell.border-right { border-right: 3px solid #000; }
+    .cell.border-bottom { border-bottom: 3px solid #000; }
+
+    .given {
+      background: #f0f0f0;
+      font-weight: bold;
+    }
+
+    .error {
+      background: #ffdddd !important;
+    }
+
+    .correct {
+      background: #ddffdd !important;
+    }
+
+    .selected {
+      background-color: #dbeafe !important;
+    }
+
+    .same-number {
+      background-color: #fef3c7 !important;
+    }
+
+    .same-line {
+      background-color: #e5e7eb;
+    }
+
+    .hinted {
+      box-shadow: inset 0 0 0 2px #f97316;
+    }
+
+    #controls {
+      margin-top: 15px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    button, select {
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid #888;
+      cursor: pointer;
+      font-size: 14px;
+      background: #fff;
+    }
+
+    button:hover { filter: brightness(0.95); }
+
+    #message {
+      margin-top: 12px;
+      min-height: 20px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <h1>数独小游戏</h1>
+
+  <div id="top-bar">
+    <label for="difficulty">难度：</label>
+    <select id="difficulty">
+      <option value="easy">简单</option>
+      <option value="medium" selected>中等</option>
+      <option value="hard">困难</option>
+    </select>
+
+    <button id="newGameBtn">新游戏</button>
+
+    <label for="langSelect">语言 / Language:</label>
+    <select id="langSelect">
+      <option value="zh">中文</option>
+      <option value="en">English</option>
+    </select>
+  </div>
+
+  <div id="timer">用时：00:00</div>
+
+  <div id="sudoku"></div>
+
+  <div id="controls">
+    <button id="checkBtn">检查答案</button>
+    <button id="resetBtn">重置</button>
+    <button id="hintBtn">提示</button>
+    <button id="showAnswerBtn">显示答案</button>
+  </div>
+
+  <div id="message"></div>
+
+  <script>
+    /* ---- 工具函数 ---- */
+    function createEmptyGrid() {
+      return Array.from({ length: 9 }, () => Array(9).fill(0));
+    }
+
+    function copyGrid(grid) {
+      return grid.map(r => r.slice());
+    }
+
+    function shuffle(a) {
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    function isSafe(grid, row, col, num) {
+      for (let i = 0; i < 9; i++) {
+        if (grid[row][i] === num) return false;
+        if (grid[i][col] === num) return false;
+      }
+      const sr = Math.floor(row / 3) * 3;
+      const sc = Math.floor(col / 3) * 3;
+      for (let r = 0; r < 3; r++)
+        for (let c = 0; c < 3; c++)
+          if (grid[sr + r][sc + c] === num) return false;
+      return true;
+    }
+
+    /* ---- 实时错误检测 ---- */
+    function checkCellError(r, c, value) {
+      if (!value) return false;
+
+      const v = parseInt(value, 10);
+      if (isNaN(v)) return false;
+
+      for (let i = 0; i < 9; i++) {
+        if (i !== c) {
+          const cell = document.querySelector(`.cell[data-row="${r}"][data-col="${i}"]`);
+          if (cell && cell.value == v) return true;
+        }
+        if (i !== r) {
+          const cell = document.querySelector(`.cell[data-row="${i}"][data-col="${c}"]`);
+          if (cell && cell.value == v) return true;
+        }
+      }
+
+      const sr = Math.floor(r / 3) * 3;
+      const sc = Math.floor(c / 3) * 3;
+      for (let rr = 0; rr < 3; rr++)
+        for (let cc = 0; cc < 3; cc++) {
+          const rr2 = sr + rr;
+          const cc2 = sc + cc;
+          if (rr2 == r && cc2 == c) continue;
+          const cell = document.querySelector(`.cell[data-row="${rr2}"][data-col="${cc2}"]`);
+          if (cell && cell.value == v) return true;
+        }
+
+      return false;
+    }
+
+    /* ---- 生成完整解 ---- */
+    function generateFullSolution() {
+      const grid = createEmptyGrid();
+      const nums = [1,2,3,4,5,6,7,8,9];
+
+      function fill(r, c) {
+        if (r === 9) return true;
+        const nr = c === 8 ? r + 1 : r;
+        const nc = c === 8 ? 0 : c + 1;
+
+        for (const n of shuffle(nums.slice())) {
+          if (isSafe(grid, r, c, n)) {
+            grid[r][c] = n;
+            if (fill(nr, nc)) return true;
+            grid[r][c] = 0;
+          }
+        }
+        return false;
+      }
+
+      fill(0,0);
+      return grid;
+    }
+
+    /* ---- 唯一解判断 ---- */
+    function solveAndCount(grid, limit = 2) {
+      function findEmpty() {
+        for (let r = 0; r < 9; r++)
+          for (let c = 0; c < 9; c++)
+            if (grid[r][c] === 0) return [r,c];
+        return null;
+      }
+
+      let count = 0;
+
+      function dfs() {
+        if (count >= limit) return;
+        const pos = findEmpty();
+        if (!pos) {
+          count++;
+          return;
+        }
+        const [r,c] = pos;
+        for (let n = 1; n <= 9; n++) {
+          if (isSafe(grid, r, c, n)) {
+            grid[r][c] = n;
+            dfs();
+            grid[r][c] = 0;
+            if (count >= limit) return;
+          }
+        }
+      }
+
+      dfs();
+      return count;
+    }
+
+    /* ---- 生成题目 ---- */
+    function generateSudoku(diff) {
+      const sol = generateFullSolution();
+      const puzzle = copyGrid(sol);
+
+      let min, max;
+      if (diff === "easy") { min = 40; max = 45; }
+      else if (diff === "medium") { min = 32; max = 36; }
+      else { min = 25; max = 30; }
+
+      const target = Math.floor((min + max) / 2);
+
+      let clues = 81;
+      const cells = [];
+      for (let r = 0; r < 9; r++)
+        for (let c = 0; c < 9; c++)
+          cells.push([r,c]);
+      shuffle(cells);
+
+      for (const [r,c] of cells) {
+        if (clues <= target) break;
+        const old = puzzle[r][c];
+        if (old === 0) continue;
+
+        puzzle[r][c] = 0;
+        const tmp = copyGrid(puzzle);
+        if (solveAndCount(tmp, 2) !== 1)
+          puzzle[r][c] = old;
+        else
+          clues--;
+      }
+
+      return { puzzle, solution: sol };
+    }
+
+    /* ---- 计时器 ---- */
+    const timerEl = document.getElementById("timer");
+    let timer = null;
+    let startTime = 0;
+    let elapsed = 0;
+
+    function updateTimer() {
+      const sec = Math.floor((Date.now() - startTime) / 1000) + elapsed;
+      timerEl.textContent = (lang==="zh"?"用时：":"Time: ") +
+        String(Math.floor(sec/60)).padStart(2,"0") + ":" +
+        String(sec%60).padStart(2,"0");
+    }
+
+    function startTimerTick() {
+      clearInterval(timer);
+      startTime = Date.now();
+      timer = setInterval(updateTimer, 1000);
+      updateTimer();
+    }
+
+    function stopTimerTick() {
+      clearInterval(timer);
+      elapsed += Math.floor((Date.now() - startTime) / 1000);
+    }
+
+    /* ---- 语言 ---- */
+    const langSelect = document.getElementById("langSelect");
+    let lang = "zh";
+
+    const textMap = {
+      zh: {
+        title:"数独小游戏", ez:"简单", md:"中等", hd:"困难",
+        new:"新游戏", check:"检查答案", reset:"重置",
+        hint:"提示", show:"显示答案"
+      },
+      en: {
+        title:"Sudoku Game", ez:"Easy", md:"Medium", hd:"Hard",
+        new:"New Game", check:"Check", reset:"Reset",
+        hint:"Hint", show:"Show Answer"
+      }
+    };
+
+    function applyLang() {
+      const t = textMap[lang];
+      document.title = t.title;
+      document.querySelector("h1").textContent = t.title;
+
+      const ds = document.getElementById("difficulty").options;
+      ds[0].textContent = t.ez; ds[1].textContent = t.md; ds[2].textContent = t.hd;
+
+      document.getElementById("newGameBtn").textContent = t.new;
+      document.getElementById("checkBtn").textContent = t.check;
+      document.getElementById("resetBtn").textContent = t.reset;
+      document.getElementById("hintBtn").textContent = t.hint;
+      document.getElementById("showAnswerBtn").textContent = t.show;
+
+      updateTimer();
+    }
+
+    langSelect.addEventListener("change",()=>{
+      lang = langSelect.value;
+      applyLang();
+    });
+
+    /* ---- UI 渲染 ---- */
+    const sudokuEl = document.getElementById("sudoku");
+    const msgEl = document.getElementById("message");
+
+    let puzzle = null, solution = null;
+
+    function clearHighlights() {
+      document.querySelectorAll(".cell").forEach(c=>{
+        c.classList.remove("selected","same-number","same-line");
+      });
+    }
+
+    function highlight(r, c) {
+      clearHighlights();
+
+      const cells = document.querySelectorAll(".cell");
+      cells.forEach(cell=>{
+        const rr = parseInt(cell.dataset.row);
+        const cc = parseInt(cell.dataset.col);
+        if (rr === r || cc === c)
+          cell.classList.add("same-line");
+      });
+
+      const cur = document.querySelector(`.cell[data-row="${r}"][data-col="${c}"]`);
+      if (!cur) return;
+      cur.classList.add("selected");
+
+      const val = cur.value.trim();
+      if (val)
+        cells.forEach(cell=>{
+          if (cell !== cur && cell.value.trim() === val)
+            cell.classList.add("same-number");
+        });
+    }
+
+    function renderSudoku() {
+      sudokuEl.innerHTML = "";
+      for (let r=0;r<9;r++) for (let c=0;c<9;c++) {
+        const inp=document.createElement("input");
+        inp.type="text"; inp.maxLength=1;
+        inp.classList.add("cell");
+        inp.dataset.row=r; inp.dataset.col=c;
+
+        if (r%3===0) inp.classList.add("border-top");
+        if (c%3===0) inp.classList.add("border-left");
+        if (r===8) inp.classList.add("border-bottom");
+        if (c===8) inp.classList.add("border-right");
+
+        if (puzzle[r][c] !== 0) {
+          inp.value = puzzle[r][c];
+          inp.classList.add("given");
+          inp.readOnly = true;
+        }
+
+        inp.addEventListener("focus",()=>{
+          highlight(r,c);
+          msgEl.textContent="";
+        });
+
+        inp.addEventListener("click",()=>{
+          highlight(r,c);
+          msgEl.textContent="";
+        });
+
+        inp.addEventListener("input",()=>{
+          let v=inp.value.replace(/[^\d]/g,"");
+          inp.value=v;
+
+          inp.classList.remove("error","correct","hinted");
+
+          if (v!=="") {
+            const isErr = checkCellError(r,c,v);
+            if (isErr) inp.classList.add("error");
+          }
+
+          highlight(r,c);
+        });
+
+        sudokuEl.appendChild(inp);
+      }
+    }
+
+    /* ---- 互动逻辑 ---- */
+    function startNew() {
+      msgEl.textContent = lang==="zh" ? "正在生成新题目..." : "Generating...";
+
+      stopTimerTick();
+      elapsed = 0;
+
+      const diff = document.getElementById("difficulty").value;
+
+      setTimeout(()=>{
+        const d = generateSudoku(diff);
+        puzzle = d.puzzle;
+        solution = d.solution;
+
+        renderSudoku();
+        msgEl.textContent = lang==="zh" ? "已生成新题目！" : "New puzzle created!";
+        startTimerTick();
+      },20);
+    }
+
+    function checkAnswer() {
+      let ok = true;
+      for (let r=0;r<9;r++) for (let c=0;c<9;c++) {
+        const cell=document.querySelector(`.cell[data-row="${r}"][data-col="${c}"]`);
+        if (parseInt(cell.value,10) !== solution[r][c]) {
+          ok=false; cell.classList.add("error");
+        }
+      }
+
+      if (ok) {
+        stopTimerTick();
+        msgEl.textContent = lang==="zh" ? "恭喜，全部正确！" : "Perfect!";
+      } else {
+        msgEl.textContent = lang==="zh" ? "存在错误，请检查红色格子。" : "Some cells are wrong.";
+      }
+    }
+
+    function resetBoard() {
+      document.querySelectorAll(".cell").forEach(cell=>{
+        if (!cell.classList.contains("given")) {
+          cell.value="";
+        }
+        cell.classList.remove("error","correct","hinted");
+      });
+      msgEl.textContent="";
+    }
+
+    function hintCell() {
+      const sel = document.querySelector(".cell.selected");
+      if (!sel) {
+        msgEl.textContent = lang==="zh" ? "请先选择一个格子。" : "Select a cell first.";
+        return;
+      }
+      if (sel.classList.contains("given")) {
+        msgEl.textContent = lang==="zh" ? "这个格子不能提示。" : "Cannot hint this cell.";
+        return;
+      }
+      const r = parseInt(sel.dataset.row);
+      const c = parseInt(sel.dataset.col);
+
+      sel.value = solution[r][c];
+      sel.classList.remove("error");
+      sel.classList.add("hinted");
+
+      highlight(r,c);
+    }
+
+    function showSolution() {
+      document.querySelectorAll(".cell").forEach(cell=>{
+        const r=parseInt(cell.dataset.row), c=parseInt(cell.dataset.col);
+        cell.value = solution[r][c];
+        cell.classList.remove("error","hinted");
+      });
+      stopTimerTick();
+      msgEl.textContent = lang==="zh" ? "答案已显示。" : "Solution shown.";
+    }
+
+    /* ---- 事件绑定 ---- */
+    document.getElementById("newGameBtn").addEventListener("click",startNew);
+    document.getElementById("checkBtn").addEventListener("click",checkAnswer);
+    document.getElementById("resetBtn").addEventListener("click",resetBoard);
+    document.getElementById("hintBtn").addEventListener("click",hintCell);
+    document.getElementById("showAnswerBtn").addEventListener("click",showSolution);
+
+    /* ---- 初始化 ---- */
+    applyLang();
+    startNew();
+  </script>
+</body>
+</html>
